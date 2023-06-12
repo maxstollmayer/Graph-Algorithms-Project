@@ -1,5 +1,6 @@
 jupyter
 matplotlib
+netgraph
 networkx
 nltk
 scikit-learn
