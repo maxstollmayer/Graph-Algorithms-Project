@@ -3,4 +3,5 @@ matplotlib
 netgraph
 networkx
 nltk
+pdfplumber
 scikit-learn
