@@ -1,4 +1,4 @@
-"""utility functions for generating and analysis graphs of books"""
+"""utility functions for generating and analysing graphs of books"""
 
 from typing import Any
 
@@ -10,8 +10,28 @@ from nltk import word_tokenize, pos_tag, download
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import wordnet
 import numpy as np
+import pdfplumber
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
+
+def extract_text(book_path: str) -> list[str]:
+    text_list = []
+    with pdfplumber.open(book_path + ".pdf") as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            text_list.append(text)
+    return text_list
+
+
+def save_text(pages: list[str], file_path: str) -> None:
+    with open(file_path + ".txt", "w", encoding="utf-8") as file:
+        for page in pages:
+            cleaned = page.strip()
+            cleaned = cleaned.replace("\n", " ")
+            cleaned = " ".join(cleaned.split())
+            file.write(cleaned)
+            file.write("\n\n")
 
 
 def get_pos(tag: str) -> str | None:
