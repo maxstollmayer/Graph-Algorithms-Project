@@ -1,2 +1,3 @@
 /.venv
 /topic_extraction.ipynb
+/__pycache__
