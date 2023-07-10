@@ -161,16 +161,22 @@ def generate_threshold_graph(
     return G
 
 
-def display_weight_stats(G: nx.Graph, bins: int = 100) -> None:
-    """Display min, mean and max values and a histogram of the weights."""
-    stats = np.array([G.edges[edge]["weight"] for edge in G.edges])
+def get_weight_stats(G: nx.Graph) -> np.ndarray:
+    """Returns weight statistics"""
+    return np.array([G.edges[edge]["weight"] for edge in G.edges])
 
-    print("minimum", stats.min())
-    print("   mean", stats.mean(), "+-", stats.std())
-    print("maximum", stats.max())
+
+def plot_weight_stats(G: nx.Graph, title: str | None = None, bins: int = 100) -> None:
+    """Plots a histogram of the weights"""
+    stats = get_weight_stats(G)
 
     plt.hist(stats, bins=bins)
-    plt.title("weight histogram")
+    plt.xlabel("cosine similarity")
+    plt.ylabel("binned count")
+    if title is not None:
+        plt.title(title)
+    else:
+        plt.title("weight histogram")
     plt.show()
 
 
