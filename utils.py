@@ -1,10 +1,9 @@
 """utility functions for generating and analysing graphs of books"""
 
+from random import sample
 from typing import Any
 
-import matplotlib as mpl
 from matplotlib import pyplot as plt
-from netgraph import Graph
 import networkx as nx
 from nltk import word_tokenize, pos_tag, download
 from nltk.stem import WordNetLemmatizer
@@ -15,19 +14,25 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 
-def extract_text(book_path: str) -> list[str]:
+NODE_ATTR_NUM = "page_num"
+NODE_ATTR_CHARS = "num_chars"
+NODE_ATTR_WORDS = "num_words"
+EDGE_ATTR = "similarity"
+
+
+def extract_text(book_name: str) -> list[str]:
     """Extracts all text from a pdf as a list of page texts"""
     text_list = []
-    with pdfplumber.open(book_path + ".pdf") as pdf:
+    with pdfplumber.open(book_name + ".pdf") as pdf:
         for page in pdf.pages:
             text = page.extract_text()
             text_list.append(text)
     return text_list
 
 
-def save_text(pages: list[str], file_path: str) -> None:
+def save_text(pages: list[str], file_name: str) -> None:
     """Saves a list of page texts to a txt file"""
-    with open(file_path + ".txt", "w", encoding="utf-8") as file:
+    with open(file_name + ".txt", "w", encoding="utf-8") as file:
         for page in pages:
             cleaned = page.strip()
             cleaned = cleaned.replace("\n", " ")
@@ -36,7 +41,77 @@ def save_text(pages: list[str], file_path: str) -> None:
             file.write("\n\n")
 
 
-def get_pos(tag: str) -> str | None:
+def split_text(words: list[str], chars_per_page: int) -> list[str]:
+    """Splits list of words into pages that do not surpass the character limit"""
+
+    pages = []
+    current_page = ""
+
+    for word in words:
+        # append word to current page if there is space
+        if len(current_page) + len(word) + 1 <= chars_per_page:
+            current_page += word + " "
+
+        # start new page otherwise
+        else:
+            pages.append(current_page.strip())
+            current_page = word + " "
+
+    # add remaining text as last page
+    if current_page:
+        pages.append(current_page.strip())
+
+    return pages
+
+
+def split_into_pages(text: str, num_pages: int) -> list[str]:
+    """
+    Returns text split into the specified number of pages
+    Does not surpass the specified number but may be lower
+    """
+
+    assert (
+        num_pages > 0
+    ), f"The number of pages has to be a positive integer, not {num_pages}."
+    chars_per_page = len(text) // num_pages + 1
+    words = text.split()
+    pages = split_text(words, chars_per_page)
+
+    while len(pages) > num_pages:
+        overflow = len(pages) - num_pages
+        chars_per_page += len(" ".join(pages[-overflow])) // 100 + 1
+        pages = split_text(words, chars_per_page)
+
+    return pages
+
+
+def get_pages(
+    book_path: str, num_pages: int | None = None, page_delimiter: str = "\n\n"
+) -> list[str]:
+    """Reads the book from the extracted pdf txt file"""
+
+    # load book
+    with open(book_path, "r", encoding="utf-8") as file:
+        text = file.read()
+
+    # split into specified number of pages
+    if num_pages is not None:
+        return split_into_pages(text, num_pages)
+
+    # keep original pages
+    return text.split(page_delimiter)
+
+
+def check_nltk_datasets() -> None:
+    """Downloads relevant nltk datasets if necessary"""
+    download("wordnet", quiet=True)
+    download("omw-1.4", quiet=True)
+    download("punkt", quiet=True)
+    download("averaged_perceptron_tagger", quiet=True)
+    download("stopwords", quiet=True)
+
+
+def to_wordnet(tag: str) -> str | None:
     """Converts between position tags and wordnet tags."""
     match tag[0]:
         case "J":
@@ -53,35 +128,17 @@ def get_pos(tag: str) -> str | None:
 
 def preprocess(text: str) -> str:
     """Tokenizes and lemmatizes the text."""
+
+    # check for necessary datasets
+    check_nltk_datasets()
+
     tokens = [token for token in word_tokenize(text.lower())]
-    tagged = [(word, get_pos(tag)) for word, tag in pos_tag(tokens)]
+    tagged = [(word, to_wordnet(tag)) for word, tag in pos_tag(tokens)]
     lemmatizer = WordNetLemmatizer()
     lemmatized = [
         lemmatizer.lemmatize(word, pos=tag) for (word, tag) in tagged if tag is not None
     ]
     return " ".join(lemmatized)
-
-
-def check_nltk_datasets() -> None:
-    """Downloads relevant nltk datasets if necessary"""
-    download("wordnet", quiet=True)
-    download("omw-1.4", quiet=True)
-    download("punkt", quiet=True)
-    download("averaged_perceptron_tagger", quiet=True)
-    download("stopwords", quiet=True)
-
-
-def get_pages(book_path: str, delimiter: str) -> list[str]:
-    """Reads the book from the extracted pdf txt file"""
-
-    # check for necessary datasets
-    check_nltk_datasets()
-
-    # load pages
-    with open(book_path, "r", encoding="utf-8") as f:
-        pages = f.read().split(delimiter)
-
-    return pages
 
 
 def get_weights(pages: list[str]) -> np.ndarray:
@@ -95,84 +152,103 @@ def get_weights(pages: list[str]) -> np.ndarray:
     freqs = vectorizer.fit_transform(data)
 
     # calculate cosine similarities between pages
-    n = len(pages)
-    weights = np.zeros((n, n))
+    num_pages = len(pages)
+    weights = np.zeros((num_pages, num_pages))
     for i, j in np.ndindex(weights.shape):
         weights[i, j] = cosine_similarity(freqs.getrow(i), freqs.getrow(j)).flatten()[0]
 
     return weights
 
 
-def generate_graph(book_path: str, delimiter: str = "\n\n") -> nx.Graph:
+def generate_graph(pages: list[str]) -> nx.Graph:
     """
-    Generates graph of the given book with pages as nodes
+    Generates graph of the given pages as nodes
+    with the following attributes:
+    - page number
+    - number of characters
+    - number of words
     and edges weighted by the cosine similarity
     """
 
-    # load book and calculate weights
-    pages = get_pages(book_path, delimiter)
     weights = get_weights(pages)
 
     # generate fully connected, weighted graph
-    G = nx.complete_graph(len(pages))
-    for i, j in G.edges:
-        G.edges[i, j]["weight"] = weights[i, j]
+    graph = nx.complete_graph(len(pages))
+    for node in graph.nodes:
+        graph.nodes[node][NODE_ATTR_NUM] = int(node)
+        graph.nodes[node][NODE_ATTR_CHARS] = len(pages[node])
+        graph.nodes[node][NODE_ATTR_WORDS] = len(pages[node].split())
+        # TODO: more attributes? e.g. page ends with punctuation or not
+    for i, j in graph.edges:
+        graph.edges[i, j][EDGE_ATTR] = weights[i, j]
 
-    return G
+    return graph
 
 
 def get_graph(
-    book: str,
-    book_folder: str = "books/",
-    graph_folder: str = "graphs/",
-    save: bool = True,
-    delimiter: str = "\n\n",
+    text: str, num_pages: int | None = None, page_delimiter: str = "\n\n"
 ) -> nx.Graph:
-    """Retrieves graph if it exists or generates it"""
-    graph_path = graph_folder + book + ".gml"
-    book_path = book_folder + book + ".txt"
-    try:
-        G = nx.read_gml(graph_path)
-        remap = {str(i): i for i in range(len(G))}
-        G = nx.relabel_nodes(G, remap)
-    except (FileNotFoundError, nx.NetworkXError):
-        G = generate_graph(book_path, delimiter)
-        if save:
-            nx.write_gml(G, graph_path)
-    return G
+    """Generates whole graph of given book in the specified number of pages"""
+
+    if num_pages is not None:
+        # split into specified number of pages
+        pages = split_into_pages(text, num_pages)
+    else:
+        # keep original pages
+        pages = text.split(page_delimiter)
+
+    return generate_graph(pages)
 
 
-def generate_threshold_graph(
-    book_path: str, threshold: float, delimiter: str = "\n\n"
-) -> nx.Graph:
-    """Returns graph with only unweighted edges that lie above the threshold"""
+def get_subgraphs(
+    text: str, num_nodes: int, page_delimiter: str = "\n\n"
+) -> list[nx.Graph]:
+    """Returns list of subgraphs of required number of nodes if book is longer"""
+    pages = text.split(page_delimiter)
+    num_pages = len(pages)
+    if num_nodes <= num_pages:
+        return [generate_graph(pages)]
 
-    # load book and calculate weights
-    pages = get_pages(book_path, delimiter)
-    weights = get_weights(pages)
-    n = len(pages)
-
-    G = nx.Graph()
-    G.add_nodes_from(range(n))
-    for i in range(n):
-        for j in range(i + 1, n):
-            if weights[i, j] >= threshold:
-                G.add_edge(i, j)
-    return G
+    graphs = []
+    max_offset = num_pages - num_nodes
+    for offset in range(max_offset):
+        subset = pages[offset : num_nodes + offset - 1]
+        graphs.append(generate_graph(subset))
+    return graphs
 
 
-def get_weight_stats(G: nx.Graph) -> np.ndarray:
+def permute_graph(graph: nx.Graph) -> tuple[nx.Graph, list[int]]:
+    """Shuffles nodes into random order"""
+
+    num_nodes = len(graph)
+    new_order = sample(range(num_nodes), num_nodes)
+    mapping = dict(zip(graph.nodes, new_order))
+    new_graph = nx.relabel_nodes(graph, mapping)
+    for node in new_graph.nodes:
+        new_graph.nodes[node][NODE_ATTR_NUM] = int(node)
+    return new_graph, new_order
+
+
+def get_weight_stats(graph: nx.Graph) -> np.ndarray:
     """Returns weight statistics"""
-    return np.array([G.edges[edge]["weight"] for edge in G.edges])
+    return np.array([graph.edges[edge][EDGE_ATTR] for edge in graph.edges])
 
 
-def plot_weight_stats(G: nx.Graph, title: str | None = None, bins: int = 100) -> None:
+def plot_weight_stats(
+    graph_whole: nx.Graph,
+    graph_split: nx.Graph,
+    title: str | None = None,
+    bins: int = 100,
+) -> None:
     """Plots a histogram of the weights"""
-    stats = get_weight_stats(G)
+    stats_whole = get_weight_stats(graph_whole)
+    stats_split = get_weight_stats(graph_split)
 
-    plt.hist(stats, bins=bins)
+    plt.hist(stats_whole, bins=bins, alpha=0.5, label="whole")
+    plt.hist(stats_split, bins=bins, alpha=0.5, label="split")
     plt.xlabel("cosine similarity")
     plt.ylabel("binned count")
+    plt.legend()
     if title is not None:
         plt.title(title)
     else:
@@ -180,46 +256,16 @@ def plot_weight_stats(G: nx.Graph, title: str | None = None, bins: int = 100) ->
     plt.show()
 
 
-def get_comm_dict(communities: list[set[int]]) -> dict[Any, int]:
-    """Convert community set to node dictionary."""
-    return {node: i for (i, community) in enumerate(communities) for node in community}
-
-
-def plot_communities(
-    G: nx.Graph, communities: list[set[int]], title: str | None = None
-) -> None:
-    """Plot the communities of a graph."""
-    comm_dict = get_comm_dict(communities)
-    colors = mpl.colormaps["tab10"].colors[: len(communities)]  # type: ignore
-    node_color = {node: colors[i] for node, i in comm_dict.items()}
-    max_weight = np.array([G.edges[edge]["weight"] for edge in G.edges]).max()
-    edge_dict = {(i, j): G.edges[(i, j)]["weight"] / max_weight for (i, j) in G.edges}
-
-    Graph(
-        G,
-        node_color=node_color,
-        node_edge_width=0,
-        edge_alpha=edge_dict,
-        edge_width=edge_dict,
-        node_layout="community",
-        node_layout_kwargs=dict(node_to_community=comm_dict),
-        node_labels=True,
-    )
-    if title is not None:
-        plt.title(title)
-    plt.show()
-
-
-def naive_sequence(G: nx.Graph, root: Any):
+def naive_sequence(graph: nx.Graph, root: Any):
     """Returns reading sequence that starts at root and goes to highest similarity in each step"""
     visited = [root]
-    for i in range(len(G) - 1):
+    for i in range(len(graph) - 1):
         weights = [
-            (node, G.edges[(visited[i], node)]["weight"])
-            for node in G
+            (node, graph.edges[(visited[i], node)][EDGE_ATTR])
+            for node in graph
             if node not in visited
         ]
-        new = max(weights, key=(lambda x: x[1]))
+        new = max(weights, key=lambda x: x[1])
         visited.append(new[0])
     return visited
 
