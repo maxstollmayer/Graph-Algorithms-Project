@@ -1,9 +1,11 @@
 """utility functions for generating and analysing graphs of books"""
 
+from functools import partial
+import os
 from random import sample
-from typing import Any
 
-from matplotlib import pyplot as plt
+import dgl
+from dgl.data import DGLDataset
 import networkx as nx
 from nltk import word_tokenize, pos_tag, download
 from nltk.stem import WordNetLemmatizer
@@ -12,12 +14,28 @@ import numpy as np
 import pdfplumber
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import torch
 
-
-NODE_ATTR_NUM = "page_num"
-NODE_ATTR_CHARS = "num_chars"
-NODE_ATTR_WORDS = "num_words"
-EDGE_ATTR = "similarity"
+TRAINING_BOOKS = [
+    "Alice's Adventures in Wonderland",
+    "Animal Farm",
+    "Cloud Atlas",
+    "If on a winter's night a traveler",
+    "Of Mice and Men",
+    "The Big Sleep",
+    "The Maltese Falcon",
+    "The Metamorphosis",
+    "The Murder of Roger Ackroyd",
+    "The Nine Tailors",
+    "The Sound and the Fury",
+    "The Strange Case of Dr. Jekyll and Mr. Hyde",
+]
+SAVE_DIR = "books"  # directory to save dataset in
+SAVE_NAME = "_dataset.bin"  # name of saved dataset
+PATHS = [os.path.join(SAVE_DIR, book + ".txt") for book in TRAINING_BOOKS]
+ATTR = "attr"  # name of attributes
+NUM_PAGES = 100  # number of pages in Cain's Jawbone
+NUM_PERMS = 10  # number of permutations to add for each generated graph
 
 
 def extract_text(book_name: str) -> list[str]:
@@ -85,23 +103,6 @@ def split_into_pages(text: str, num_pages: int) -> list[str]:
     return pages
 
 
-def get_pages(
-    book_path: str, num_pages: int | None = None, page_delimiter: str = "\n\n"
-) -> list[str]:
-    """Reads the book from the extracted pdf txt file"""
-
-    # load book
-    with open(book_path, "r", encoding="utf-8") as file:
-        text = file.read()
-
-    # split into specified number of pages
-    if num_pages is not None:
-        return split_into_pages(text, num_pages)
-
-    # keep original pages
-    return text.split(page_delimiter)
-
-
 def check_nltk_datasets() -> None:
     """Downloads relevant nltk datasets if necessary"""
     download("wordnet", quiet=True)
@@ -167,54 +168,76 @@ def generate_graph(pages: list[str]) -> nx.Graph:
     - page number
     - number of characters
     - number of words
-    and edges weighted by the cosine similarity
+    - sum of all adjacent edge weights
+    - edges weighted by the cosine similarity
     """
 
     weights = get_weights(pages)
 
     # generate fully connected, weighted graph
     graph = nx.complete_graph(len(pages))
-    for node in graph.nodes:
-        graph.nodes[node][NODE_ATTR_NUM] = int(node)
-        graph.nodes[node][NODE_ATTR_CHARS] = len(pages[node])
-        graph.nodes[node][NODE_ATTR_WORDS] = len(pages[node].split())
-        # TODO: more attributes? e.g. page ends with punctuation or not
+
     for i, j in graph.edges:
-        graph.edges[i, j][EDGE_ATTR] = weights[i, j]
+        graph.edges[i, j][ATTR] = weights[i, j]
+
+    for node in graph.nodes:
+        graph.nodes[node][ATTR] = (
+            float(node),
+            float(len(pages[node])),
+            float(len(pages[node].split())),
+            sum(
+                graph.edges[(node, other)][ATTR]
+                for other in graph.nodes
+                if node != other
+            ),
+        )
+        # TODO: more attributes? e.g. page ends with punctuation or not
 
     return graph
 
 
-def get_graph(
-    text: str, num_pages: int | None = None, page_delimiter: str = "\n\n"
-) -> nx.Graph:
-    """Generates whole graph of given book in the specified number of pages"""
-
-    if num_pages is not None:
-        # split into specified number of pages
-        pages = split_into_pages(text, num_pages)
-    else:
-        # keep original pages
-        pages = text.split(page_delimiter)
-
-    return generate_graph(pages)
+def to_dgl(graph: nx.Graph) -> dgl.DGLGraph:
+    """Converts a NetworkX graph to a DGL graph"""
+    return dgl.from_networkx(
+        nx.to_directed(graph), node_attrs=[ATTR], edge_attrs=[ATTR]
+    )
 
 
-def get_subgraphs(
-    text: str, num_nodes: int, page_delimiter: str = "\n\n"
-) -> list[nx.Graph]:
-    """Returns list of subgraphs of required number of nodes if book is longer"""
-    pages = text.split(page_delimiter)
-    num_pages = len(pages)
-    if num_nodes <= num_pages:
-        return [generate_graph(pages)]
+def load_dgl_graph(book: str, page_delimiter: str = "\n\n") -> dgl.DGLGraph:
+    """Generates a DGL graph of given book"""
+    path = os.path.join(SAVE_DIR, book + ".txt")
+    with open(path, "r", encoding="utf-8") as file:
+        pages = file.read().split(page_delimiter)
 
-    graphs = []
-    max_offset = num_pages - num_nodes
-    for offset in range(max_offset):
-        subset = pages[offset : num_nodes + offset - 1]
-        graphs.append(generate_graph(subset))
-    return graphs
+    return to_dgl(generate_graph(pages))
+
+
+def get_windows(num_pages: int, window_size: int) -> list[tuple[int, int]]:
+    """Returns equally spaced windows for given range"""
+    if num_pages <= window_size:
+        return [(0, num_pages)]
+
+    if num_pages <= 2 * window_size:
+        return [(0, window_size), (num_pages - window_size, num_pages)]
+
+    q = num_pages / window_size
+    n = int(q)
+    num_windows = n if q == n else n + 1
+
+    offset = (num_windows * window_size - num_pages) / (num_windows - 1)
+    overlap = int(offset)
+    missing = int(round((offset - overlap) * (num_windows - 1)))
+
+    windows = []
+    for i in range(num_windows):
+        start = i * (window_size - overlap)
+        end = (i + 1) * window_size - i * overlap
+        if num_windows - i <= missing:
+            start -= missing
+            end -= missing
+        windows.append((start, end))
+
+    return windows
 
 
 def permute_graph(graph: nx.Graph) -> tuple[nx.Graph, list[int]]:
@@ -225,103 +248,91 @@ def permute_graph(graph: nx.Graph) -> tuple[nx.Graph, list[int]]:
     mapping = dict(zip(graph.nodes, new_order))
     new_graph = nx.relabel_nodes(graph, mapping)
     for node in new_graph.nodes:
-        new_graph.nodes[node][NODE_ATTR_NUM] = int(node)
+        _, attrs = new_graph.nodes[node][ATTR]
+        new_graph.nodes[node][ATTR] = (float(node), *attrs)
     return new_graph, new_order
 
 
-def get_weight_stats(graph: nx.Graph) -> np.ndarray:
-    """Returns weight statistics"""
-    return np.array([graph.edges[edge][EDGE_ATTR] for edge in graph.edges])
+def sparsify_graph(graph: nx.Graph, k: int):
+    """Returns graph that only consists of the k nearest neighbor edges"""
+    new_graph = graph.copy()
+    new_graph.clear_edges()
+
+    def get_weight(node, other):
+        return graph.edges[(node, other)][ATTR]
+
+    for node in graph.nodes:
+        k_neighbors = sorted(
+            graph.neighbors(node), key=partial(get_weight, node), reverse=True
+        )[:k]
+        for other in k_neighbors:
+            new_graph.add_edge(node, other)
+            new_graph.edges[(node, other)][ATTR] = graph.edges[(node, other)][ATTR]
+    return new_graph
 
 
-def plot_weight_stats(
-    graph_whole: nx.Graph,
-    graph_split: nx.Graph,
-    title: str | None = None,
-    bins: int = 100,
-) -> None:
-    """Plots a histogram of the weights"""
-    stats_whole = get_weight_stats(graph_whole)
-    stats_split = get_weight_stats(graph_split)
+class BookDataset(DGLDataset):
+    """Dataset for graph of books"""
 
-    plt.hist(stats_whole, bins=bins, alpha=0.5, label="whole")
-    plt.hist(stats_split, bins=bins, alpha=0.5, label="split")
-    plt.xlabel("cosine similarity")
-    plt.ylabel("binned count")
-    plt.legend()
-    if title is not None:
-        plt.title(title)
-    else:
-        plt.title("weight histogram")
-    plt.show()
+    def __init__(
+        self,
+        force_reload: bool = False,
+        verbose: bool = False,
+    ) -> None:
+        super().__init__(
+            name=SAVE_DIR, save_dir="", force_reload=force_reload, verbose=verbose
+        )
 
+    def process(self) -> None:
+        # load books
 
-def naive_sequence(graph: nx.Graph, root: Any):
-    """Returns reading sequence that starts at root and goes to highest similarity in each step"""
-    visited = [root]
-    for i in range(len(graph) - 1):
-        weights = [
-            (node, graph.edges[(visited[i], node)][EDGE_ATTR])
-            for node in graph
-            if node not in visited
-        ]
-        new = max(weights, key=lambda x: x[1])
-        visited.append(new[0])
-    return visited
+        texts = []
+        for path in PATHS:
+            with open(path, "r", encoding="utf-8") as book:
+                texts.append(book.read())
 
+        nxgraphs = []
+        for text in texts:
+            # resplit into 100 pages
+            split_pages = split_into_pages(text, NUM_PAGES)
+            nxgraphs.append(generate_graph(split_pages))
 
-def cosine_error(sequence: list[int]) -> float:
-    """
-    Calculates the cosine similarity of a page sequence
-    to the standard reading sequence 1 2 3...
-    """
-    ref = np.array(range(len(sequence))).reshape(1, -1)
-    seq = np.array(sequence).reshape(1, -1)
-    return cosine_similarity(seq, ref)[0, 0]
+            # subgraphs of 100 consecutive pages
+            true_pages = text.split("\n\n")
+            if len(true_pages) > NUM_PAGES:
+                windows = get_windows(len(true_pages), NUM_PAGES)
+                subgraphs = [
+                    generate_graph(true_pages[start:end]) for (start, end) in windows
+                ]
+                nxgraphs.extend(subgraphs)
 
+        # permute graphs, add labels and convert to dgl
+        graphs = []
+        labels = []
+        for graph in nxgraphs:
+            for _ in range(NUM_PERMS):
+                permuted_graph, label = permute_graph(graph)
+                graphs.append(to_dgl(permuted_graph))
+                labels.append(label)
 
-def l1_error(sequence: list[int]) -> float:
-    """
-    Calculates the L1 distance of a page sequence
-    to the standard reading sequence 1 2 3...
-    """
-    ref = np.arange(len(sequence))
-    seq = np.array(sequence)
-    return np.sum(np.abs(ref - seq))
+        self.graphs = graphs
+        self.labels = torch.LongTensor(labels)
 
+    def __getitem__(self, i: int) -> tuple[dgl.DGLGraph, torch.Tensor]:
+        return self.graphs[i], self.labels[i]
 
-def l2_error(sequence: list[int]) -> float:
-    """
-    Calculates the Euclidean distance of a page sequence
-    to the standard reading sequence 1 2 3...
-    """
-    ref = np.arange(len(sequence))
-    seq = np.array(sequence)
-    return np.sqrt(np.sum((ref - seq) ** 2))
+    def __len__(self) -> int:
+        return len(self.graphs)
 
+    def save(self) -> None:
+        graph_path = os.path.join(self.save_path, SAVE_NAME)
+        dgl.save_graphs(graph_path, self.graphs, {"labels": self.labels})
 
-def linf_error(sequence: list[int]) -> float:
-    """
-    Calculates the Euclidean distance of a page sequence
-    to the standard reading sequence 1 2 3...
-    """
-    ref = np.arange(len(sequence))
-    seq = np.array(sequence)
-    return np.max(np.abs(ref - seq))
+    def load(self) -> None:
+        graph_path = os.path.join(self.save_path, SAVE_NAME)
+        self.graphs, label_dict = dgl.load_graphs(graph_path)
+        self.labels = label_dict["labels"]
 
-
-def plot_sequence_errors(books: list[str], sequences: list[list[int]]) -> None:
-    """Plots different errors from the generated reading sequences"""
-    l1_errors = np.array([l1_error(sequence) for sequence in sequences])
-    l2_errors = np.array([l2_error(sequence) for sequence in sequences])
-    linf_errors = np.array([linf_error(sequence) for sequence in sequences])
-    cosine_errors = np.array([cosine_error(sequence) for sequence in sequences])
-
-    plt.title("normalized errors")
-    plt.plot(books, l1_errors / np.max(l1_errors), label="l1")
-    plt.plot(books, l2_errors / np.max(l2_errors), label="l2")
-    plt.plot(books, linf_errors / np.max(linf_errors), label="linf")
-    plt.plot(books, cosine_errors / np.max(cosine_errors), label="cosine")
-    plt.xticks(rotation=90)
-    plt.legend()
-    plt.show()
+    def has_cache(self):
+        graph_path = os.path.join(self.save_path, SAVE_NAME)
+        return os.path.exists(graph_path)

@@ -5,3 +5,6 @@ networkx
 nltk
 pdfplumber
 scikit-learn
+dgl
+dglgo
+gensim
