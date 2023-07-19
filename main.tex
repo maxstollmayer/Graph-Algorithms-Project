@@ -1,0 +1,97 @@
+\documentclass[a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{dsfont}
+\usepackage{csquotes}
+\usepackage{listings}
+
+\usepackage{graphicx}
+
+\usepackage{biblatex}
+\addbibresource{resources.bib}
+\nocite{*}
+
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    pdfencoding=unicode,
+    pdftitle={Unraveling Cain's Jawbone: Narrative Detection and Analysis Using Louvain and Spectral Clustering Algorithms},
+    pdfauthor={MAXIMILIAN STOLLMAYER & ABDELBAST NASSIRI},
+    pdfpagemode=FullScreen
+}
+
+\title{Unraveling Cain's Jawbone: Narrative Detection and Analysis Using Louvain and Spectral Clustering Algorithms}
+\author{MAXIMILIAN STOLLMAYER \\ 
+ABDELBAST NASSIRI}
+\date{July 2023}
+
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+Cain's Jawbone, a literary puzzle book published in 1934 under the author's pseudonym "Torquemada", presents an intriguing murder mystery that has captivated readers for decades. The challenge lies in rearranging the book's randomized 100 pages to unveil the correct sequence of events and solve the crime. This intricate puzzle has been successfully cracked by only three individuals to date, highlighting its complexity and allure.
+
+Our project sets out to apply graph algorithms to Cain's Jawbone in an attempt to shed more light on the puzzle or potentially solve it. One of the main challenges lies in finding the correct reading sequence of the 100 pages. Initially we considered approaching this problem by finding a sequence of the 100 pages that maximizes similarity between them. However, with approximately $100! \approx 10^{158}$ possible permutations, this approach becomes computationally infeasable. Moreover, focusing solely on similarity between pages may not guarantee the correct sequence, as multiple narratives might follow one another without necessarily being similar.
+
+One avenue we explored too remedy this was the application of a graph neural network (GNN) trained on actual books to retrieve a reading sequence for Cain's Jawbone. Although inspired by existing works \cite{GNN1} and \cite{GNN2}, which address the traveling salesperson problem using GNNs and reinforcement learning, this approach proved quite complex and too ambitious for the scope of this project. Our experimental efforts can be found within our notebook \verb|GNN.ipynb| on our GitHub \cite{github}.
+
+Given the complexity of finding a reading sequence, we shifted our focus to a more feasible task: identifying the six murder victims and their six murderers. The puzzle-solving community theorizes that six distinct narratives surround each murder within the book. To accomplish this, we employed Spectral clustering and Louvain community detection algorithms to identify groups of pages corresponding to these narratives.
+
+By employing these graph algorithms, we hope to gain deeper insights into Cain's Jawbone and contribute to the ongoing fascination surrounding this timeless literary puzzle.
+
+
+\section{Methodology}
+
+In order to use these graph algorithms on our book we first need to convert it into a graph. Since we do not know the actual ordering of the pages we can consider a fully connected graph, where each node represents a page, with the edges weighted by how similar two pages are.
+
+\subsection{Data Preparation}
+
+Before constructing the graph, we perform essential and standard routines for natural language processing to clean and standardize the text. The preprocessing steps include:
+
+\begin{itemize}
+    \item Tokenization of the text into individual words or phrases aids in organizing the data for further analysis.
+    \item Removing special characters, punctuation, and any non-alphanumeric symbols that may not contribute to the analysis.
+    \item Lemmatization of the words so that they are in their standard form.
+    \item Removing stop words, i.e. common words such as "the", "is" and "and", that are frequently used but add little contextual value.
+\end{itemize}
+
+\subsection{Graph Construction}
+
+The book was presented as fully connected graph, with each pages as nodes and measured the relationship between the pages using the cosine similarity between the vectors of the pages constructed using TF-IDF and represented it as the weights of the edges between the pages.
+
+\subsection{Spectral Clustering Algorithm}
+
+In addition to the Louvain algorithm, we employed spectral clustering to further analyze the narrative clusters obtained in the previous step. Spectral clustering is a powerful technique for partitioning data points based on spectral properties of the Laplacian matrix. To apply the spectral clustering, we used the function \verb|SpectralClustering| from scikit-learn \cite{sklearn} to compute the 6 smallest eigenvectors of the Graph-Laplacian matrix, and then cluster the points of row vectors of the $100 \times 6$ matrix $M$ formed by the eigenvectors using k-mean clustering algorithm into clusters $C_1$ to $C_6$, and output the clusters $A_1$ to $A_6$ with $A_{i} = \{j \ | \ y_{j} \in C_{j}\}$, where $y_{j}$ is the $j$'th row vector of the matrix $M$.
+
+\subsection{Louvain Algorithm}
+
+In order to compare the results of the spectral clustering we will also use the Louvain algorithm. The Louvain algorithm is a community detection algorithm. It was proven to be effective in detecting cohesive clusters within complex networks. In our implementation, we used \verb|louvain_communities| function provided by the NetworkX \cite{networkx} library in Python. This function iteratively optimizes the graph partitioning by maximizing the modularity measure, which is a measure of the quality of the clustering. The resulting partition obtained from the Louvain algorithm represents different clusters or communities within the graph. We consider each cluster as a potential narrative within the book Cain's Jawbone.
+
+
+\section{Comparison}
+
+To compare the effectiveness of the two clustering algorithms, we can utilize two distinct approaches: quantitative analysis and qualitative analysis. Given the complexity and difficulty of the book's content, conducting a full-fledged qualitative analysis using domain knowledge becomes impractical. Instead, we opted for a quick examination of the best clusters produced by the two algorithms to observe any discernible differences.
+
+Using a quantitative approach to gauge the "goodness" of the clusters generated by each algorithm, we need a suitable measure. One such measure is the concept of coherence. Coherence, in the context of clustering, refers to the thematic consistency and meaningfulness of the identified clusters.
+
+Coherence is a measure that evaluates the relatedness and coherence of words within clusters. It helps determine if the clusters reflect cohesive narratives or themes present in the dataset. See \cite{coherence} for more mathematical details and how to apply it.
+
+We ran each algorithm 100 times to account for their inherent randomness. The computed mean coherence scores for the spectral clustering and the Louvain algorithm were found to be 0.673 and 0.693 respectively. These scores indicate a slight advantage in favor of the spectral clustering algorithm, suggesting that its output clusters exhibit better thematic coherence and overall consistency on average compared to the alternative method. The best score is roughly 0.705 achieved by both algorithms and these best scoring clusters appear to be very similar by a visual inspection.
+
+
+\section{Results}
+
+The application of spectral clustering and the Louvain algorithm allowed us to identify cohesive clusters of the nodes within the constructed graph. These clusters (possibly) correspond to the distinct narrative threads in Cain's Jawbone and if we continue with trying to recover a reading sequence this helped us reduce the seach space of possible permutations from $100! \approx 10^{158}$ to the number of permutations within each cluster, roughly $10^{22}$, which is an improvement of 136 orders of magnitude!
+
+For the full analysis and plots of these clusters see our notebook \\ \verb|graph_analysis.ipynb| on our GitHub repository \cite{github}.
+
+
+\printbibliography
+
+\end{document}
