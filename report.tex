@@ -7,16 +7,18 @@
 \usepackage{dsfont}
 \usepackage{csquotes}
 \usepackage{listings}
+\usepackage{amsmath}
+\usepackage{amsfonts}
 
 \usepackage{graphicx}
 
-\usepackage{biblatex}
+\usepackage[sorting=ynt]{biblatex}
 \addbibresource{resources.bib}
 \nocite{*}
 
 \usepackage{hyperref}
 \hypersetup{
-    colorlinks=true,
+    colorlinks=false,
     pdfencoding=unicode,
     pdftitle={Unraveling Cain's Jawbone: Narrative Detection and Analysis Using Louvain and Spectral Clustering Algorithms},
     pdfauthor={MAXIMILIAN STOLLMAYER & ABDELBAST NASSIRI},
@@ -39,9 +41,9 @@ Cain's Jawbone, a literary puzzle book published in 1934 under the author's pseu
 
 Our project sets out to apply graph algorithms to Cain's Jawbone in an attempt to shed more light on the puzzle or potentially solve it. One of the main challenges lies in finding the correct reading sequence of the 100 pages. Initially we considered approaching this problem by finding a sequence of the 100 pages that maximizes similarity between them. However, with approximately $100! \approx 10^{158}$ possible permutations, this approach becomes computationally infeasable. Moreover, focusing solely on similarity between pages may not guarantee the correct sequence, as multiple narratives might follow one another without necessarily being similar.
 
-One avenue we explored too remedy this was the application of a graph neural network (GNN) trained on actual books to retrieve a reading sequence for Cain's Jawbone. Although inspired by existing works \cite{GNN1} and \cite{GNN2}, which address the traveling salesperson problem using GNNs and reinforcement learning, this approach proved quite complex and too ambitious for the scope of this project. Our experimental efforts can be found within our notebook \verb|GNN.ipynb| on our GitHub \cite{github}.
+One avenue we explored to remedy this was the application of a graph neural network (GNN) trained on actual books to retrieve a reading sequence for Cain's Jawbone. Although inspired by existing works \cite{GNN1} and \cite{GNN2}, which address the traveling salesperson problem using GNNs and reinforcement learning, this approach proved quite complex and too ambitious for the scope of this project. Our experimental efforts can be found within our notebook \verb|GNN.ipynb| on our GitHub \cite{github}.
 
-Given the complexity of finding a reading sequence, we shifted our focus to a more feasible task: identifying the six murder victims and their six murderers. The puzzle-solving community theorizes that six distinct narratives surround each murder within the book. To accomplish this, we employed Spectral clustering and Louvain community detection algorithms to identify groups of pages corresponding to these narratives.
+Given the complexity of finding a reading sequence, we shifted our focus to a more feasible task: identifying the six murder victims and their six murderers. The puzzle-solving community theorizes that six distinct narratives surround each murder within the book. To accomplish this, we employed spectral clustering and Louvain community detection algorithms to identify groups of pages corresponding to these narratives.
 
 By employing these graph algorithms, we hope to gain deeper insights into Cain's Jawbone and contribute to the ongoing fascination surrounding this timeless literary puzzle.
 
@@ -52,11 +54,11 @@ In order to use these graph algorithms on our book we first need to convert it i
 
 \subsection{Data Preparation}
 
-Before constructing the graph, we perform essential and standard routines for natural language processing to clean and standardize the text. The preprocessing steps include:
+Before constructing the graph, we perform essential and standard routines in natural language processing to clean and standardize the text. The preprocessing steps include:
 
 \begin{itemize}
-    \item Tokenization of the text into individual words or phrases aids in organizing the data for further analysis.
-    \item Removing special characters, punctuation, and any non-alphanumeric symbols that may not contribute to the analysis.
+    \item Tokenization of the text into individual words.
+    \item Removing special characters, punctuation, and any non-alphanumeric symbols.
     \item Lemmatization of the words so that they are in their standard form.
     \item Removing stop words, i.e. common words such as "the", "is" and "and", that are frequently used but add little contextual value.
 \end{itemize}
@@ -65,11 +67,27 @@ Before constructing the graph, we perform essential and standard routines for na
 
 The book can be represented as a fully connected graph, with each page as a node and the edges weighted by how similar the two connected pages are.
 
-One way to measure this similarity is to vectorize the pages by calculating the frequencies of how often each word in the book appears on the page. These vectors can then be compared using the cosine similarity $S_C(x, y) = \frac{\langle x, y \rangle}{\|x\| \|y\|}$. Since in this case we always deal with positive frequencies $S_C \in [0, 1]$.
+To quantify this similarity, we vectorize the pages, which involves calculating the word frequencies on each page and representing them as vectors. By doing so, we create a numerical representation of the book's content.
+
+Now we can use the cosine similarity metric, denoted as $S_C(x, y) = \frac{\langle x, y \rangle}{|x| |y|}$, where $x$ and $y$ are the vectorized representations of the respective pages. Cosine similarity measures the cosine of the angle between two vectors, which ranges from -1 to 1. However, since our vectors consist of positive frequencies, the cosine similarity will lie within the interval [0, 1]. This similarity score provides insight into how closely related two pages are in terms of their word usage.
 
 \subsection{Spectral Clustering Algorithm}
 
-Spectral clustering is a powerful technique for partitioning data points based on spectral properties of the Laplacian matrix. To apply the spectral clustering, we used the function \verb|SpectralClustering| from scikit-learn \cite{sklearn} to compute the 6 smallest eigenvectors of the Graph-Laplacian matrix, and then cluster the points of row vectors of the $100 \times 6$ matrix $M$ formed by the eigenvectors using k-mean clustering algorithm into clusters $C_1$ to $C_6$, and output the clusters $A_1$ to $A_6$ with $A_{i} = \{j \ | \ y_{j} \in C_{j}\}$, where $y_{j}$ is the $j$'th row vector of the matrix $M$.
+Spectral clustering is a powerful technique for partitioning data points based on the Laplacian matrix. It arises as a relaxation to the graph cut problem, where one tries to minimize the number of cuts, or rather the summed value of the cuts, needed to separate the graph into the desired number of partitions.
+
+We implemented spectral clustering using the normalized Laplacian approach described in \cite{spectral}. The algorithm takes a graph $G = (V, E)$ and the number of clusters $k$ as input and consists of the following steps:
+
+\begin{enumerate}
+    \item Compute the normalized graph Laplacian $L = I - D^{-1/2} W D^{-1/2}$, where $I$ is the identiy, $D$ the diagonal degree and $W$ the weight matrix of the graph.
+    \item Compute the first $k$ eigenvectors $u_1, \dots, u_k$ of $L$.
+    \item Construct the matrix $U \in \mathbb{R}^{|V| \times k}$ containing these eigenvectors as columns.
+    \item Normalize the rows of $U$ to norm 1.
+    \item Cluster the the rows of $U$ using k-means clustering from scikit learn \cite{sklearn} into clusters $C_1, \dots, C_k$. Alternatively one could also try to minimize $x^\top L x$ with $\|x\|=1$ using for example Reileigh quotients.
+    \item Output clusters $A_1, \dots, A_k$ with with $A_{i} = \{j \ | \ y_{j} \in C_{j}\}$, where $y_{j}$ is the $j$'th row vector of the matrix $U$.
+\end{enumerate}
+
+
+
 
 \subsection{Louvain Algorithm}
 
@@ -84,12 +102,12 @@ Using a quantitative approach to gauge the "goodness" of the clusters generated 
 
 Coherence is a measure that evaluates the relatedness and coherence of words within clusters. It helps determine if the clusters reflect cohesive narratives or themes present in the dataset. See \cite{coherence} for more mathematical details and how to apply it.
 
-We ran each algorithm 100 times to account for their inherent randomness. The computed mean coherence scores for the spectral clustering and the Louvain algorithm were found to be 0.673 and 0.693 respectively. These scores indicate a slight advantage in favor of the spectral clustering algorithm, suggesting that its output clusters exhibit better thematic coherence and overall consistency on average compared to the alternative method. The best score is roughly 0.705 achieved by both algorithms and these best scoring clusters appear to be very similar by a visual inspection.
+We ran each algorithm 100 times to account for their inherent randomness. The computed mean coherence scores for the spectral clustering and the Louvain algorithm were found to be 0.658 and 0.652 respectively. These scores indicate a slight advantage in favor of the spectral clustering algorithm, suggesting that its output clusters exhibit better thematic coherence and overall consistency on average compared to the alternative method. The best score is roughly 0.683 achieved by both algorithms and these best scoring clusters appear to be very similar by a visual inspection.
 
 
 \section{Results}
 
-The application of spectral clustering and the Louvain algorithm allowed us to identify cohesive clusters of the nodes within the constructed graph. These clusters (possibly) correspond to the distinct narrative threads in Cain's Jawbone and if we continue with trying to recover a reading sequence this helped us reduce the seach space of possible permutations from $100! \approx 10^{158}$ to the number of permutations within each cluster, roughly $10^{22}$, which is an improvement of 136 orders of magnitude!
+The application of spectral clustering and the Louvain algorithm allowed us to identify cohesive clusters of the nodes within the constructed graph. These clusters (possibly) correspond to the distinct narrative threads in Cain's Jawbone and if we continue with trying to recover a reading sequence this helped us reduce the seach space of possible permutations from $100! \approx 10^{158}$ to the number of permutations within each cluster, roughly $10^{23}$, which is an improvement of 135 orders of magnitude!
 
 For the full analysis and plots of these clusters see our notebook \\ \verb|graph_analysis.ipynb| on our GitHub repository \cite{github}.
 
