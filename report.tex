@@ -63,7 +63,9 @@ Before constructing the graph, we perform essential and standard routines for na
 
 \subsection{Graph Construction}
 
-The book was presented as fully connected graph, with each page as a node and measured the relationship between the pages using the cosine similarity between the vectors of the pages constructed using TF-IDF and represented them as the weights of the edges between the pages.
+The book can be represented as a fully connected graph, with each page as a node and the edges weighted by how similar the two connected pages are.
+
+One way to measure this similarity is to vectorize the pages by calculating the frequencies of how often each word in the book appears on the page. These vectors can then be compared using the cosine similarity $S_C(x, y) = \frac{\langle x, y \rangle}{\|x\| \|y\|}$. Since in this case we always deal with positive frequencies $S_C \in [0, 1]$.
 
 \subsection{Spectral Clustering Algorithm}
 
