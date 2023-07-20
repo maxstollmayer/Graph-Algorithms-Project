@@ -69,7 +69,7 @@ The book can be represented as a fully connected graph, with each page as a node
 
 To quantify this similarity, we vectorize the pages, which involves calculating the word frequencies on each page and representing them as vectors. By doing so, we create a numerical representation of the book's content.
 
-Now we can use the cosine similarity metric, denoted as $S_C(x, y) = \frac{\langle x, y \rangle}{|x| |y|}$, where $x$ and $y$ are the vectorized representations of the respective pages. Cosine similarity measures the cosine of the angle between two vectors, which ranges from -1 to 1. However, since our vectors consist of positive frequencies, the cosine similarity will lie within the interval [0, 1]. This similarity score provides insight into how closely related two pages are in terms of their word usage.
+Now we can use the cosine similarity metric, denoted as $S_C(x, y) = \frac{\langle x, y \rangle}{\|x\| \|y\|}$, where $x$ and $y$ are the vectorized representations of the respective pages. Cosine similarity measures the cosine of the angle between two vectors, which ranges from -1 to 1. However, since our vectors consist of positive frequencies, the cosine similarity will lie within the interval [0, 1]. This similarity score provides insight into how closely related two pages are in terms of their word usage.
 
 \subsection{Spectral Clustering Algorithm}
 
